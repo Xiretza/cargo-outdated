@@ -8,15 +8,16 @@ pub use self::{elaborate_workspace::ElaborateWorkspace, pkg_status::*, temp_proj
 
 /// A continent struct for quick parsing and manipulating manifest
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 struct Manifest {
-    #[serde(rename = "cargo-features", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub cargo_features: Option<Value>,
     pub package: Table,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dependencies: Option<Table>,
-    #[serde(rename = "dev-dependencies", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub dev_dependencies: Option<Table>,
-    #[serde(rename = "build-dependencies", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub build_dependencies: Option<Table>,
     pub lib: Option<Table>,
     pub bin: Option<Vec<Table>>,
