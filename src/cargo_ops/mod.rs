@@ -19,12 +19,15 @@ struct Manifest {
     pub dev_dependencies: Option<Table>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub build_dependencies: Option<Table>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub lib: Option<Table>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub bin: Option<Vec<Table>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace: Option<Table>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target: Option<Table>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub features: Option<Value>,
     #[serde(rename = "patch", skip_serializing_if = "Option::is_none")]
     pub patch: Option<Table>,
