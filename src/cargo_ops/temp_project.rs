@@ -84,8 +84,12 @@ impl<'tmp> TempProject<'tmp> {
                 ::toml::from_str(&buf).context("Parsing temporary manifest")?
             };
 
-            if om.package.contains_key("default-run") {
-                om.package.remove("default-run");
+            if om
+                .package
+                .as_mut()
+                .and_then(|package| package.remove("default-run"))
+                .is_some()
+            {
                 let om_serialized = ::toml::to_string(&om).expect("Cannot format as TOML file");
                 let mut cargo_toml = OpenOptions::new()
                     .read(true)
@@ -99,8 +103,12 @@ impl<'tmp> TempProject<'tmp> {
 
             // if build script is specified in the original Cargo.toml (from links or build)
             // remove it as we do not need it for checking dependencies
-            if om.package.contains_key("links") {
-                om.package.remove("links");
+            if om
+                .package
+                .as_mut()
+                .and_then(|package| package.remove("links"))
+                .is_some()
+            {
                 let om_serialized = ::toml::to_string(&om).expect("Cannot format as TOML file");
                 let mut cargo_toml = OpenOptions::new()
                     .read(true)
@@ -112,8 +120,12 @@ impl<'tmp> TempProject<'tmp> {
                     .context("Writing to created temporary manifest")?;
             }
 
-            if om.package.contains_key("build") {
-                om.package.remove("build");
+            if om
+                .package
+                .as_mut()
+                .and_then(|package| package.remove("build"))
+                .is_some()
+            {
                 let om_serialized = ::toml::to_string(&om).expect("Cannot format as TOML file");
                 let mut cargo_toml = OpenOptions::new()
                     .read(true)
@@ -310,7 +322,9 @@ impl<'tmp> TempProject<'tmp> {
                 ::toml::from_str(&buf)?
             };
 
-            manifest.bin = Some(vec![bin.clone()]);
+            if manifest.package.is_some() {
+                manifest.bin = Some(vec![bin.clone()]);
+            }
             // provide lib.path
             if let Some(lib) = manifest.lib.as_mut() {
                 lib.insert("path".to_owned(), Value::String("test_lib.rs".to_owned()));
@@ -326,11 +340,18 @@ impl<'tmp> TempProject<'tmp> {
                 )
             })?;
 
-            let package_name = manifest.name();
-            let features = manifest.features.clone();
-            Self::manipulate_dependencies(&mut manifest, &mut |deps| {
-                self.update_version_and_feature(deps, &features, workspace, &package_name, false)
-            })?;
+            if let Some(package_name) = manifest.name() {
+                let features = manifest.features.clone();
+                Self::manipulate_dependencies(&mut manifest, &mut |deps| {
+                    self.update_version_and_feature(
+                        deps,
+                        &features,
+                        workspace,
+                        &package_name,
+                        false,
+                    )
+                })?;
+            }
 
             Self::write_manifest(&manifest, manifest_path)?;
         }
@@ -363,7 +384,9 @@ impl<'tmp> TempProject<'tmp> {
                 ::toml::from_str(&buf)?
             };
 
-            manifest.bin = Some(vec![bin.clone()]);
+            if manifest.package.is_some() {
+                manifest.bin = Some(vec![bin.clone()]);
+            }
             // provide lib.path
             if let Some(lib) = manifest.lib.as_mut() {
                 lib.insert("path".to_owned(), Value::String("test_lib.rs".to_owned()));
@@ -379,11 +402,12 @@ impl<'tmp> TempProject<'tmp> {
                 )
             })?;
 
-            let package_name = manifest.name();
-            let features = manifest.features.clone();
-            Self::manipulate_dependencies(&mut manifest, &mut |deps| {
-                self.update_version_and_feature(deps, &features, workspace, &package_name, true)
-            })?;
+            if let Some(package_name) = manifest.name() {
+                let features = manifest.features.clone();
+                Self::manipulate_dependencies(&mut manifest, &mut |deps| {
+                    self.update_version_and_feature(deps, &features, workspace, &package_name, true)
+                })?;
+            }
 
             Self::write_manifest(&manifest, manifest_path)?;
         }
