@@ -28,7 +28,7 @@ pub struct TempProject<'tmp> {
     pub temp_dir: TempDir,
     manifest_paths: Vec<PathBuf>,
     config: Config,
-    relative_manifest: String,
+    relative_manifest: PathBuf,
     options: &'tmp Options,
     is_workspace_project: bool,
 }
@@ -37,12 +37,11 @@ impl<'tmp> TempProject<'tmp> {
     /// Copy needed manifest and lock files from an existing workspace
     pub fn from_workspace(
         orig_workspace: &ElaborateWorkspace<'_>,
-        orig_manifest: &str,
+        orig_manifest: &Path,
         options: &'tmp Options,
     ) -> CargoResult<TempProject<'tmp>> {
         // e.g. /path/to/project
         let workspace_root = orig_workspace.workspace.root();
-        let workspace_root_str = workspace_root.to_string_lossy();
         let temp_dir = Builder::new()
             .prefix("cargo-outdated")
             .tempdir()
@@ -55,13 +54,10 @@ impl<'tmp> TempProject<'tmp> {
             // e.g. /path/to/project/src/sub
             let mut from_dir = from.clone();
             from_dir.pop();
-            let from_dir_str = from_dir.to_string_lossy();
 
             // e.g. /tmp/cargo.xxx/src/sub
-            let mut dest = if workspace_root_str.len() < from_dir_str.len() {
-                temp_dir
-                    .path()
-                    .join(&from_dir_str[workspace_root_str.len() + 1..])
+            let mut dest = if let Ok(sub) = from_dir.strip_prefix(workspace_root) {
+                temp_dir.path().join(sub)
             } else {
                 temp_dir.path().to_owned()
             };
@@ -181,7 +177,15 @@ impl<'tmp> TempProject<'tmp> {
             .context("Copying to temporary `.cargo/config`")?;
         }
 
-        let relative_manifest = String::from(&orig_manifest[workspace_root_str.len() + 1..]);
+        let relative_manifest = orig_manifest
+            .strip_prefix(workspace_root)
+            .with_context(|| {
+                format!(
+                    "original manifest path {:?} is not prefixed with workspace root path {:?}",
+                    orig_manifest, workspace_root
+                )
+            })?
+            .to_owned();
         let config = Self::generate_config(temp_dir.path(), &relative_manifest, options)
             .context("Generating config for temporary workspace")?;
 
@@ -198,7 +202,7 @@ impl<'tmp> TempProject<'tmp> {
 
     fn generate_config(
         root: &Path,
-        relative_manifest: &str,
+        relative_manifest: &Path,
         options: &Options,
     ) -> CargoResult<Config> {
         let shell = ::cargo::core::Shell::new();
@@ -706,11 +710,12 @@ impl<'tmp> TempProject<'tmp> {
                         let orig_path = Path::new(&orig_path);
                         if orig_path.is_relative() {
                             let relative = {
-                                let delimiter: &[_] = &['/', '\\'];
-                                let relative = &tmp_manifest.to_string_lossy()
-                                    [tmp_root.to_string_lossy().len()..];
-                                let mut relative =
-                                    PathBuf::from(relative.trim_start_matches(delimiter));
+                                let mut relative = tmp_manifest.strip_prefix(tmp_root).with_context(|| {
+                                    format!(
+                                        "original temp manifest path {:?} is not prefixed with temp workspace root path {:?}",
+                                        tmp_manifest, tmp_root
+                                    )
+                                })?.to_owned();
                                 relative.pop();
                                 relative.join(orig_path)
                             };
@@ -729,13 +734,17 @@ impl<'tmp> TempProject<'tmp> {
                                     }
                                 } else {
                                     let mut replaced = t.clone();
+                                    let replaced_path = fs::canonicalize(orig_root.join(relative))?;
+                                    let replaced_path =
+                                        replaced_path.to_str().ok_or_else(|| {
+                                            anyhow!(
+                                                "path {:?} is not a UTF-8 string",
+                                                replaced_path
+                                            )
+                                        })?;
                                     replaced.insert(
                                         "path".to_owned(),
-                                        Value::String(
-                                            fs::canonicalize(orig_root.join(relative))?
-                                                .to_string_lossy()
-                                                .to_string(),
-                                        ),
+                                        Value::String(replaced_path.to_string()),
                                     );
                                     dependencies.insert(name, Value::Table(replaced));
                                 }
@@ -784,7 +793,7 @@ fn manifest_paths(elab: &ElaborateWorkspace<'_>) -> CargoResult<Vec<PathBuf>> {
     fn manifest_paths_recursive(
         pkg_id: PackageId,
         elab: &ElaborateWorkspace<'_>,
-        workspace_path: &str,
+        workspace_path: &Path,
         visited: &mut HashSet<PackageId>,
         manifest_paths: &mut Vec<PathBuf>,
     ) -> CargoResult<()> {
@@ -793,7 +802,7 @@ fn manifest_paths(elab: &ElaborateWorkspace<'_>) -> CargoResult<Vec<PathBuf>> {
         }
         visited.insert(pkg_id);
         let pkg = &elab.pkgs[&pkg_id];
-        let pkg_path = pkg.root().to_string_lossy();
+        let pkg_path = pkg.root();
 
         // Checking if there's a CARGO_HOME set and that it is not an empty string
         let cargo_home_path = match std::env::var_os("CARGO_HOME") {
@@ -810,7 +819,7 @@ fn manifest_paths(elab: &ElaborateWorkspace<'_>) -> CargoResult<Vec<PathBuf>> {
         if pkg.root().starts_with(PathBuf::from(workspace_path))
             && (cargo_home_path.is_none()
                 || !pkg_path
-                    .starts_with(&cargo_home_path.expect("Error extracting CARGO_HOME string")))
+                    .starts_with(cargo_home_path.expect("Error extracting CARGO_HOME string")))
         {
             manifest_paths.push(pkg.manifest_path().to_owned());
         }
@@ -824,7 +833,7 @@ fn manifest_paths(elab: &ElaborateWorkspace<'_>) -> CargoResult<Vec<PathBuf>> {
     }
 
     // executed against a virtual manifest
-    let workspace_path = elab.workspace.root().to_string_lossy();
+    let workspace_path = elab.workspace.root();
     // if cargo workspace is not explicitly used, the package itself would be a
     // member
     for member in elab.workspace.members() {
@@ -832,7 +841,7 @@ fn manifest_paths(elab: &ElaborateWorkspace<'_>) -> CargoResult<Vec<PathBuf>> {
         manifest_paths_recursive(
             root_pkg_id,
             elab,
-            &workspace_path,
+            workspace_path,
             &mut visited,
             &mut manifest_paths,
         )

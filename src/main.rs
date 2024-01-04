@@ -126,9 +126,8 @@ pub fn execute(options: Options, config: &mut Config) -> CargoResult<i32> {
 
     verbose!(config, "Parsing...", "compat workspace");
     let mut skipped = HashSet::new();
-    let compat_proj =
-        TempProject::from_workspace(&ela_curr, &curr_manifest.to_string_lossy(), &options)
-            .with_context(|| format!("Creating temp compat workspace for {:?}", curr_manifest))?;
+    let compat_proj = TempProject::from_workspace(&ela_curr, &curr_manifest, &options)
+        .with_context(|| format!("Creating temp compat workspace for {:?}", curr_manifest))?;
     verbose!(
         config,
         "Writing...",
@@ -168,9 +167,8 @@ pub fn execute(options: Options, config: &mut Config) -> CargoResult<i32> {
     )?;
 
     verbose!(config, "Parsing...", "latest workspace");
-    let latest_proj =
-        TempProject::from_workspace(&ela_curr, &curr_manifest.to_string_lossy(), &options)
-            .with_context(|| format!("Creating temp latest workspace for {:?}", curr_manifest))?;
+    let latest_proj = TempProject::from_workspace(&ela_curr, &curr_manifest, &options)
+        .with_context(|| format!("Creating temp latest workspace for {:?}", curr_manifest))?;
     verbose!(
         config,
         "Writing...",
