@@ -46,9 +46,32 @@ impl<'tmp> TempProject<'tmp> {
             .prefix("cargo-outdated")
             .tempdir()
             .context("Creating cargo-outdated tempdir")?;
-        let manifest_paths = manifest_paths(orig_workspace)
-            .context("Extracting original workspace manifest paths")?;
+        let mut manifest_paths = manifest_paths(orig_workspace)
+            .context("Extracting original workspace manifest paths")?
+            .into_iter()
+            .map(move |(p, pkg)| (p, Some(pkg)))
+            .collect::<Vec<_>>();
         let mut tmp_manifest_paths = vec![];
+
+        // Ensure we handle workspaces first, as they may declare dependencies that are
+        // inherited later.
+        let virtual_root_path = workspace_root.join("Cargo.toml");
+        match manifest_paths
+            .iter()
+            .position(|(p, _)| p == &virtual_root_path)
+        {
+            Some(0) => {}
+            Some(index) => {
+                let manifest_path = manifest_paths.remove(index);
+                manifest_paths.insert(0, manifest_path);
+            }
+            None if virtual_root_path.is_file() => {
+                manifest_paths.insert(0, (virtual_root_path, None));
+            }
+            None => {}
+        };
+
+        let manifest_paths = manifest_paths;
 
         for (from, from_pkg) in &manifest_paths {
             // e.g. /path/to/project/src/sub
@@ -133,22 +156,25 @@ impl<'tmp> TempProject<'tmp> {
                     .context("Writing to created temporary manifest")?;
             }
 
+            // Make implicit `lib` table explicit
+            if om.lib.is_none() && from_pkg.and_then(|pkg| pkg.library()).is_some() {
+                om.lib = Some(Table::new());
+                let om_serialized = ::toml::to_string(&om).expect("Cannot format as TOML file");
+                let mut cargo_toml = OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .truncate(true)
+                    .open(&dest)
+                    .context("Opening created temporary manifest for writing")?;
+                write!(cargo_toml, "{om_serialized}")
+                    .context("Writing to created temporary manifest")?;
+            }
+
             let lockfile = from_dir.join("Cargo.lock");
             if lockfile.is_file() {
                 dest.pop();
                 dest.push("Cargo.lock");
                 fs::copy(lockfile, dest).context("Copying to temporary lockfile")?;
-            }
-        }
-
-        // virtual root
-        let mut virtual_root = workspace_root.join("Cargo.toml");
-        if !manifest_paths.iter().any(|(p, _)| p == &virtual_root) && virtual_root.is_file() {
-            fs::copy(&virtual_root, temp_dir.path().join("Cargo.toml"))?;
-            virtual_root.pop();
-            virtual_root.push("Cargo.lock");
-            if virtual_root.is_file() {
-                fs::copy(&virtual_root, temp_dir.path().join("Cargo.lock"))?;
             }
         }
 
@@ -271,6 +297,11 @@ impl<'tmp> TempProject<'tmp> {
     where
         F: FnMut(&mut Table) -> CargoResult<()>,
     {
+        if let Some(workspace) = manifest.workspace.as_mut() {
+            if let Some(Value::Table(dep)) = workspace.get_mut("dependencies") {
+                f(dep)?;
+            }
+        }
         if let Some(dep) = manifest.dependencies.as_mut() {
             f(dep)?;
         }
