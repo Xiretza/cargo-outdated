@@ -266,13 +266,11 @@ impl<'tmp> TempProject<'tmp> {
         }
         if let Some(t) = manifest.target.as_mut() {
             for (_key, target) in t.iter_mut() {
-                if let Value::Table(ref mut target) = *target {
+                if let Value::Table(target) = target {
                     for dependency_tables in
                         &["dependencies", "dev-dependencies", "build-dependencies"]
                     {
-                        if let Some(&mut Value::Table(ref mut dep_table)) =
-                            target.get_mut(*dependency_tables)
-                        {
+                        if let Some(Value::Table(dep_table)) = target.get_mut(*dependency_tables) {
                             f(dep_table)?;
                         }
                     }
@@ -479,8 +477,8 @@ impl<'tmp> TempProject<'tmp> {
         if !optional && self.options.features.contains(&String::from("default")) {
             return true;
         }
-        let features_table = match *features_table {
-            Some(Value::Table(ref features_table)) => features_table,
+        let features_table = match features_table {
+            Some(Value::Table(features_table)) => features_table,
             _ => return false,
         };
         let mut to_resolve: Vec<&str> = self
@@ -502,11 +500,11 @@ impl<'tmp> TempProject<'tmp> {
             if features_table.contains_key(feature) {
                 let specified_features = match features_table.get(feature) {
                     None => panic!("Feature {feature} does not exist"),
-                    Some(Value::Array(ref specified_features)) => specified_features,
+                    Some(Value::Array(specified_features)) => specified_features,
                     _ => panic!("Feature {feature} is not mapped to an array"),
                 };
                 for spec in specified_features {
-                    if let Value::String(ref spec) = *spec {
+                    if let Value::String(spec) = spec {
                         to_resolve.push(spec.as_str());
                     }
                 }
@@ -562,9 +560,9 @@ impl<'tmp> TempProject<'tmp> {
                         };
                     }
                 }
-                Value::Table(ref t) => {
+                Value::Table(t) => {
                     let mut name = match t.get("package") {
-                        Some(Value::String(ref s)) => s,
+                        Some(Value::String(s)) => s,
                         Some(_) => panic!("'package' of dependency {dep_key} is not a string"),
                         None => &dep_key,
                     };
@@ -593,7 +591,7 @@ impl<'tmp> TempProject<'tmp> {
                     }
                     let mut replaced = t.clone();
                     let requirement = match t.get("version") {
-                        Some(Value::String(ref requirement)) => Some(requirement.as_str()),
+                        Some(Value::String(requirement)) => Some(requirement.as_str()),
                         Some(_) => panic!("Version of {name} is not a string"),
                         _ => None,
                     };
@@ -623,11 +621,11 @@ impl<'tmp> TempProject<'tmp> {
                     }
                     if replaced.contains_key("features") {
                         let features = match replaced.get("features") {
-                            Some(Value::Array(ref features)) => features
+                            Some(Value::Array(features)) => features
                                 .iter()
                                 .filter(|&feature| {
-                                    let feature = match *feature {
-                                        Value::String(ref feature) => feature,
+                                    let feature = match feature {
+                                        Value::String(feature) => feature,
                                         _ => panic!(
                                             "Features section of {name} is not an array of strings"
                                         ),
@@ -679,9 +677,9 @@ impl<'tmp> TempProject<'tmp> {
                 .cloned()
                 .ok_or(OutdatedError::NoMatchingDependency)?;
             match original {
-                Value::Table(ref t) if t.contains_key("path") => {
-                    if let Value::String(ref orig_path) = t["path"] {
-                        let orig_path = Path::new(orig_path);
+                Value::Table(t) if t.contains_key("path") => {
+                    if let Value::String(orig_path) = &t["path"] {
+                        let orig_path = Path::new(&orig_path);
                         if orig_path.is_relative() {
                             let relative = {
                                 let delimiter: &[_] = &['/', '\\'];
@@ -697,7 +695,7 @@ impl<'tmp> TempProject<'tmp> {
                                     dependencies.remove(&name);
 
                                     if t.contains_key("package") {
-                                        if let Value::String(ref package_name) = t["package"] {
+                                        if let Value::String(package_name) = &t["package"] {
                                             skipped.insert(package_name.to_string());
                                         } else {
                                             skipped.insert(name);
