@@ -43,8 +43,12 @@ impl<'tmp> TempProject<'tmp> {
         // e.g. /path/to/project
         let workspace_root = orig_workspace.workspace.root();
         let workspace_root_str = workspace_root.to_string_lossy();
-        let temp_dir = Builder::new().prefix("cargo-outdated").tempdir()?;
-        let manifest_paths = manifest_paths(orig_workspace)?;
+        let temp_dir = Builder::new()
+            .prefix("cargo-outdated")
+            .tempdir()
+            .context("Creating cargo-outdated tempdir")?;
+        let manifest_paths = manifest_paths(orig_workspace)
+            .context("Extracting original workspace manifest paths")?;
         let mut tmp_manifest_paths = vec![];
 
         for from in &manifest_paths {
@@ -62,61 +66,70 @@ impl<'tmp> TempProject<'tmp> {
                 temp_dir.path().to_owned()
             };
 
-            fs::create_dir_all(&dest)?;
+            fs::create_dir_all(&dest).context("Creating temporary manifest parent directories")?;
 
             // e.g. /tmp/cargo.xxx/src/sub/Cargo.toml
             dest.push("Cargo.toml");
             tmp_manifest_paths.push(dest.clone());
-            fs::copy(from, &dest)?;
+            fs::copy(from, &dest)
+                .with_context(|| format!("Copying {:?} to temporary manifest {:?}", from, dest))?;
 
             // removing default-run key if it exists to check dependencies
             let mut om: Manifest = {
                 let mut buf = String::new();
-                let mut file = File::open(&dest)?;
-                file.read_to_string(&mut buf)?;
-                ::toml::from_str(&buf)?
+                let mut file =
+                    File::open(&dest).context("Opening created temporary manifest for reading")?;
+                file.read_to_string(&mut buf)
+                    .context("Reading opened temporary manifest")?;
+                ::toml::from_str(&buf).context("Parsing temporary manifest")?
             };
 
             if om.package.contains_key("default-run") {
                 om.package.remove("default-run");
-                let om_serialized = ::toml::to_string(&om).expect("Cannot format as toml file");
+                let om_serialized = ::toml::to_string(&om).expect("Cannot format as TOML file");
                 let mut cargo_toml = OpenOptions::new()
                     .read(true)
                     .write(true)
                     .truncate(true)
-                    .open(&dest)?;
-                write!(cargo_toml, "{om_serialized}")?;
+                    .open(&dest)
+                    .context("Opening created temporary manifest for writing")?;
+                write!(cargo_toml, "{om_serialized}")
+                    .context("Writing to created temporary manifest")?;
             }
 
             // if build script is specified in the original Cargo.toml (from links or build)
             // remove it as we do not need it for checking dependencies
             if om.package.contains_key("links") {
                 om.package.remove("links");
-                let om_serialized = ::toml::to_string(&om).expect("Cannot format as toml file");
+                let om_serialized = ::toml::to_string(&om).expect("Cannot format as TOML file");
                 let mut cargo_toml = OpenOptions::new()
                     .read(true)
                     .write(true)
                     .truncate(true)
-                    .open(&dest)?;
-                write!(cargo_toml, "{om_serialized}")?;
+                    .open(&dest)
+                    .context("Opening created temporary manifest for writing")?;
+                write!(cargo_toml, "{om_serialized}")
+                    .context("Writing to created temporary manifest")?;
             }
 
             if om.package.contains_key("build") {
                 om.package.remove("build");
-                let om_serialized = ::toml::to_string(&om).expect("Cannot format as toml file");
+                let om_serialized = ::toml::to_string(&om).expect("Cannot format as TOML file");
                 let mut cargo_toml = OpenOptions::new()
                     .read(true)
                     .write(true)
                     .truncate(true)
-                    .open(&dest)?;
-                write!(cargo_toml, "{om_serialized}")?;
+                    .open(&dest)
+                    .context("Opening created temporary manifest for writing")?;
+                write!(cargo_toml, "{om_serialized}")
+                    .context("Writing to created temporary manifest")?;
             }
 
             let lockfile = from_dir.join("Cargo.lock");
             if lockfile.is_file() {
                 dest.pop();
                 dest.push("Cargo.lock");
-                fs::copy(lockfile, dest)?;
+                fs::copy(lockfile, dest).context("Copying to temporary lockfile")?;
             }
         }
 
@@ -135,25 +148,30 @@ impl<'tmp> TempProject<'tmp> {
         // this is the preferred way
         // https://doc.rust-lang.org/cargo/reference/config.html
         if workspace_root.join(".cargo/config.toml").is_file() {
-            fs::create_dir_all(temp_dir.path().join(".cargo"))?;
+            fs::create_dir_all(temp_dir.path().join(".cargo"))
+                .context("Creating temporary `.cargo` directory")?;
             fs::copy(
                 workspace_root.join(".cargo/config.toml"),
                 temp_dir.path().join(".cargo/config.toml"),
-            )?;
+            )
+            .context("Copying to temporary `.cargo/config.toml`")?;
         }
 
         //.cargo/config
         // this is legacy support for config files without the `.toml` extension
         if workspace_root.join(".cargo/config").is_file() {
-            fs::create_dir_all(temp_dir.path().join(".cargo"))?;
+            fs::create_dir_all(temp_dir.path().join(".cargo"))
+                .context("Creating temporary `.cargo` directory")?;
             fs::copy(
                 workspace_root.join(".cargo/config"),
                 temp_dir.path().join(".cargo/config"),
-            )?;
+            )
+            .context("Copying to temporary `.cargo/config`")?;
         }
 
         let relative_manifest = String::from(&orig_manifest[workspace_root_str.len() + 1..]);
-        let config = Self::generate_config(temp_dir.path(), &relative_manifest, options)?;
+        let config = Self::generate_config(temp_dir.path(), &relative_manifest, options)
+            .context("Generating config for temporary workspace")?;
 
         Ok(TempProject {
             workspace: Rc::new(RefCell::new(None)),
@@ -173,7 +191,7 @@ impl<'tmp> TempProject<'tmp> {
     ) -> CargoResult<Config> {
         let shell = ::cargo::core::Shell::new();
         let cwd = env::current_dir()
-            .with_context(|| "Cargo couldn't get the current directory of the process")?;
+            .context("Cargo couldn't get the current directory of the process")?;
 
         let homedir = ::cargo::util::homedir(&cwd).ok_or_else(|| {
             anyhow!(
@@ -189,17 +207,19 @@ impl<'tmp> TempProject<'tmp> {
         let cargo_home_path = std::env::var_os("CARGO_HOME").map(std::path::PathBuf::from);
 
         let mut config = Config::new(shell, cwd, homedir);
-        config.configure(
-            0,
-            options.verbose == 0,
-            Some(&options.color.to_string().to_ascii_lowercase()),
-            options.frozen(),
-            options.locked(),
-            options.offline,
-            &cargo_home_path,
-            &[],
-            &[],
-        )?;
+        config
+            .configure(
+                0,
+                options.verbose == 0,
+                Some(&options.color.to_string().to_ascii_lowercase()),
+                options.frozen(),
+                options.locked(),
+                options.offline,
+                &cargo_home_path,
+                &[],
+                &[],
+            )
+            .context("Configuring Cargo")?;
         Ok(config)
     }
 
@@ -219,14 +239,15 @@ impl<'tmp> TempProject<'tmp> {
                 .as_ref()
                 .ok_or(OutdatedError::NoWorkspace)?,
             &update_opts,
-        )?;
+        )
+        .context("Updating Cargo lockfile")?;
         Ok(())
     }
 
     fn write_manifest<P: AsRef<Path>>(manifest: &Manifest, path: P) -> CargoResult<()> {
-        let mut file = File::create(path)?;
+        let mut file = File::create(path).context("Creating temporary manifest file")?;
         let serialized = ::toml::to_string(manifest).expect("Failed to serialized Cargo.toml");
-        write!(file, "{serialized}")?;
+        write!(file, "{serialized}").context("Writing to created temporary manifest")?;
         Ok(())
     }
 
@@ -437,7 +458,7 @@ impl<'tmp> TempProject<'tmp> {
                 // access to write to the terminal
                 // if this fails it's a cargo (as a dependency) issue
                 self.warn(format!(
-                    "cannot compare {} crate version found in toml {} with crates.io latest {}",
+                    "cannot compare {} crate version found in TOML {} with crates.io latest {}",
                     name,
                     ver_req,
                     query_result[0].version()
@@ -773,7 +794,8 @@ fn manifest_paths(elab: &ElaborateWorkspace<'_>) -> CargoResult<Vec<PathBuf>> {
         }
 
         for &dep in elab.pkg_deps[&pkg_id].keys() {
-            manifest_paths_recursive(dep, elab, workspace_path, visited, manifest_paths)?;
+            manifest_paths_recursive(dep, elab, workspace_path, visited, manifest_paths)
+                .context("Extracting dependency manifest paths")?;
         }
 
         Ok(())
@@ -791,7 +813,8 @@ fn manifest_paths(elab: &ElaborateWorkspace<'_>) -> CargoResult<Vec<PathBuf>> {
             &workspace_path,
             &mut visited,
             &mut manifest_paths,
-        )?;
+        )
+        .context("Extracting root workspace member manifest paths")?;
     }
 
     Ok(manifest_paths)
