@@ -10,7 +10,7 @@ use std::{
 
 use anyhow::{anyhow, Context};
 use cargo::{
-    core::{Dependency, PackageId, QueryKind, Source, Summary, Verbosity, Workspace},
+    core::{Dependency, Package, PackageId, QueryKind, Source, Summary, Verbosity, Workspace},
     ops::{update_lockfile, UpdateOptions},
     sources::config::SourceConfigMap,
     util::{network::PollExt, CargoResult, Config},
@@ -50,7 +50,7 @@ impl<'tmp> TempProject<'tmp> {
             .context("Extracting original workspace manifest paths")?;
         let mut tmp_manifest_paths = vec![];
 
-        for from in &manifest_paths {
+        for (from, from_pkg) in &manifest_paths {
             // e.g. /path/to/project/src/sub
             let mut from_dir = from.clone();
             from_dir.pop();
@@ -143,7 +143,7 @@ impl<'tmp> TempProject<'tmp> {
 
         // virtual root
         let mut virtual_root = workspace_root.join("Cargo.toml");
-        if !manifest_paths.contains(&virtual_root) && virtual_root.is_file() {
+        if !manifest_paths.iter().any(|(p, _)| p == &virtual_root) && virtual_root.is_file() {
             fs::copy(&virtual_root, temp_dir.path().join("Cargo.toml"))?;
             virtual_root.pop();
             virtual_root.push("Cargo.lock");
@@ -786,16 +786,18 @@ fn features_and_options(summary: &Summary) -> HashSet<&str> {
 }
 
 /// Paths of all manifest files in current workspace
-fn manifest_paths(elab: &ElaborateWorkspace<'_>) -> CargoResult<Vec<PathBuf>> {
+fn manifest_paths<'a>(
+    elab: &'a ElaborateWorkspace<'_>,
+) -> CargoResult<Vec<(PathBuf, &'a Package)>> {
     let mut visited: HashSet<PackageId> = HashSet::new();
     let mut manifest_paths = vec![];
 
-    fn manifest_paths_recursive(
+    fn manifest_paths_recursive<'a>(
         pkg_id: PackageId,
-        elab: &ElaborateWorkspace<'_>,
+        elab: &'a ElaborateWorkspace<'_>,
         workspace_path: &Path,
         visited: &mut HashSet<PackageId>,
-        manifest_paths: &mut Vec<PathBuf>,
+        manifest_paths: &mut Vec<(PathBuf, &'a Package)>,
     ) -> CargoResult<()> {
         if visited.contains(&pkg_id) {
             return Ok(());
@@ -821,7 +823,7 @@ fn manifest_paths(elab: &ElaborateWorkspace<'_>) -> CargoResult<Vec<PathBuf>> {
                 || !pkg_path
                     .starts_with(cargo_home_path.expect("Error extracting CARGO_HOME string")))
         {
-            manifest_paths.push(pkg.manifest_path().to_owned());
+            manifest_paths.push((pkg.manifest_path().to_owned(), pkg));
         }
 
         for &dep in elab.pkg_deps[&pkg_id].keys() {
